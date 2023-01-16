@@ -1,7 +1,13 @@
 use chrono::Utc;
 use poise::serenity_prelude as serenity;
 use sqlx::sqlite::{Sqlite, SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{query, Pool};
+use sqlx::{migrate::Migrator, query, Pool};
+
+#[poise::command(prefix_command)]
+async fn register(ctx: Context<'_>) -> Result<(), Error> {
+    poise::builtins::register_application_commands_buttons(ctx).await?;
+    Ok(())
+}
 
 // User data, which is stored and accessible in all command invocations
 struct Data {
@@ -19,17 +25,15 @@ impl Data {
             )
             .await
             .expect("Couldn't connect to database");
+
+        static MIGRATOR: Migrator = sqlx::migrate!();
+        MIGRATOR.run(&database).await.unwrap();
         Self { database }
     }
 }
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
-
-#[poise::command(slash_command, subcommands("add", "random"))]
-async fn quote(_ctx: Context<'_>) -> Result<(), Error> {
-    Ok(())
-}
 
 #[derive(Debug)]
 enum DatabaseError {
@@ -46,6 +50,11 @@ impl std::fmt::Display for DatabaseError {
             }
         }
     }
+}
+
+#[poise::command(slash_command, subcommands("add", "random"))]
+async fn quote(ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
 }
 
 #[poise::command(slash_command)]
@@ -69,6 +78,7 @@ async fn add(
     Ok(())
 }
 
+/// Bring up a random quote by a particular user
 #[poise::command(slash_command)]
 async fn random(
     ctx: Context<'_>,
@@ -109,6 +119,18 @@ async fn main() {
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                if let Ok(guild) = std::env::var("DISCORD_GUILD") {
+                    poise::builtins::register_in_guild(
+                        ctx,
+                        &framework.options().commands,
+                        serenity::GuildId(
+                            u64::from_str_radix(&guild, 10).expect("Invalid Guild Id"),
+                        ),
+                    )
+                    .await
+                    .expect("Invalid Guild Id");
+                    println!("Registered guild commands!");
+                };
                 Ok(Data::new().await)
             })
         });
