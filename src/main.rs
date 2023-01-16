@@ -6,14 +6,14 @@ use sqlx::{migrate::Migrator, query, Pool};
 
 #[derive(Parser)]
 struct Cli {
-    /// Access token for your bot.
+    /// Access token for your bot. Required to run.
     #[arg(short, long, required(true))]
     token: String,
     /// Path to where the database should be stored, relative to the current path. If it doesn't exist it will
     /// be created. By default it will use './database.sqlite'.
     #[arg(short, long)]
     database: Option<String>,
-    /// Guild id to connect to. Useful for testing, speeds up registering of commands.
+    /// Optional guild id to connect to. Useful for testing, speeds up registering of commands.
     #[arg(short, long)]
     guild: Option<u64>,
 }
