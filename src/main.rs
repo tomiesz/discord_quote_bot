@@ -1,34 +1,61 @@
 use chrono::Utc;
+use clap::Parser;
 use poise::serenity_prelude as serenity;
 use sqlx::sqlite::{Sqlite, SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{migrate::Migrator, query, Pool};
 
-#[poise::command(prefix_command)]
-async fn register(ctx: Context<'_>) -> Result<(), Error> {
-    poise::builtins::register_application_commands_buttons(ctx).await?;
-    Ok(())
+#[derive(Parser)]
+struct Cli {
+    /// Access token for your bot.
+    #[arg(short, long, required(true))]
+    token: String,
+    /// Path to where the database should be stored, relative to the current path. If it doesn't exist it will
+    /// be created. By default it will use './database.sqlite'.
+    #[arg(short, long)]
+    database: Option<String>,
+    /// Guild id to connect to. Useful for testing, speeds up registering of commands.
+    #[arg(short, long)]
+    guild: Option<u64>,
 }
 
-// User data, which is stored and accessible in all command invocations
 struct Data {
     database: Pool<Sqlite>,
+    guild: Option<serenity::GuildId>,
 }
 
 impl Data {
-    async fn new() -> Data {
+    async fn migrate(&self) {
+        static MIGRATOR: Migrator = sqlx::migrate!();
+        MIGRATOR.run(&self.database).await.unwrap();
+    }
+    async fn from(guild: Option<u64>, db: Option<String>) -> Self {
+        let path = if let Some(db) = db {
+            db
+        } else {
+            "database.sqlite".to_string()
+        };
+
+        let id = if let Some(gid) = guild {
+            Some(serenity::GuildId(gid))
+        } else {
+            None
+        };
         let database = SqlitePoolOptions::new()
             .max_connections(5)
             .connect_with(
                 SqliteConnectOptions::new()
-                    .filename("database.sqlite")
+                    .filename(path)
                     .create_if_missing(true),
             )
             .await
-            .expect("Couldn't connect to database");
-
-        static MIGRATOR: Migrator = sqlx::migrate!();
-        MIGRATOR.run(&database).await.unwrap();
-        Self { database }
+            .expect("Couldn't connect to database"); // TODO handle database creation & connection
+                                                     // errors better
+        let out = Self {
+            database,
+            guild: id,
+        };
+        out.migrate().await;
+        out
     }
 }
 
@@ -53,7 +80,7 @@ impl std::fmt::Display for DatabaseError {
 }
 
 #[poise::command(slash_command, subcommands("add", "random"))]
-async fn quote(ctx: Context<'_>) -> Result<(), Error> {
+async fn quote(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
@@ -109,29 +136,25 @@ async fn random(
 
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+    let data = Data::from(cli.guild, cli.database).await;
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![quote()],
             ..Default::default()
         })
-        .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
+        .token(cli.token)
         .intents(serenity::GatewayIntents::non_privileged())
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                if let Ok(guild) = std::env::var("DISCORD_GUILD") {
-                    poise::builtins::register_in_guild(
-                        ctx,
-                        &framework.options().commands,
-                        serenity::GuildId(
-                            u64::from_str_radix(&guild, 10).expect("Invalid Guild Id"),
-                        ),
-                    )
-                    .await
-                    .expect("Invalid Guild Id");
+                if let Some(guild) = data.guild {
+                    poise::builtins::register_in_guild(ctx, &framework.options().commands, guild)
+                        .await
+                        .expect("Invalid Guild Id");
                     println!("Registered guild commands!");
                 };
-                Ok(Data::new().await)
+                Ok(data)
             })
         });
 
