@@ -155,14 +155,12 @@ async fn main() {
         .intents(serenity::GatewayIntents::non_privileged())
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 if let Some(guild) = data.guild {
                     poise::builtins::register_in_guild(ctx, &framework.options().commands, guild)
                         .await
                         .expect("Invalid Guild Id");
                     println!("Registering guild commands!");
                 };
-                println!("Registering global commands");
                 Ok(data)
             })
         });
