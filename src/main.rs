@@ -4,6 +4,8 @@ use poise::serenity_prelude as serenity;
 use sqlx::sqlite::{Sqlite, SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{migrate::Migrator, query, Pool};
 
+// Whenever somebody joins slap a quote of theirs
+
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
@@ -24,7 +26,6 @@ struct Cli {
 
 struct Data {
     database: Pool<Sqlite>,
-    guild: Option<serenity::GuildId>,
 }
 
 impl Data {
@@ -54,10 +55,7 @@ impl Data {
             .await
             .expect("Couldn't connect to database"); // TODO handle database creation & connection
                                                      // errors better
-        let out = Self {
-            database,
-            guild: id,
-        };
+        let out = Self { database };
         out.migrate().await;
         out
     }
@@ -83,7 +81,28 @@ impl std::fmt::Display for DatabaseError {
     }
 }
 
-#[poise::command(slash_command, subcommands("add", "random"))]
+#[poise::command(slash_command)]
+async fn list(
+    ctx: Context<'_>,
+    #[description = "Selected user"] user: serenity::User,
+) -> Result<(), Error> {
+    let user_id = user.id.as_u64().to_string();
+    let entries = query!("SELECT * FROM quotes WHERE user_id = ?;", user_id)
+        .fetch_all(&ctx.data().database)
+        .await?;
+    let mut response = serenity::MessageBuilder::new();
+    for entry in entries {
+        response
+            .push_bold_safe(entry.quote)
+            .push(" on ")
+            .push(entry.quote_date)
+            .push("\n");
+    }
+    ctx.say(response.build()).await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, subcommands("add", "random", "list"))]
 async fn quote(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
@@ -155,12 +174,7 @@ async fn main() {
         .intents(serenity::GatewayIntents::non_privileged())
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                if let Some(guild) = data.guild {
-                    poise::builtins::register_in_guild(ctx, &framework.options().commands, guild)
-                        .await
-                        .expect("Invalid Guild Id");
-                    println!("Registering guild commands!");
-                };
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 Ok(data)
             })
         });
